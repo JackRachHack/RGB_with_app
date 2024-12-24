@@ -1,103 +1,83 @@
+import serial
 import tkinter as tk
-from smbus import SMBus
 
-addr = 0x8
-bus = SMBus(1)
+# Configuração da porta serial
+ser = serial.Serial('/dev/ttyACM0', 9600, timeout=1)
 
-# bus.read_i2c_block_data(addr, 0x00, 2)
-# bus.write_i2c_block_data(addr, 0x00, [0,0]})
+# Função para enviar dados ao microcontrolador
+def enviar_dados(identifier, value):
+    ser.write(b'i')
+    ser.write(identifier.to_bytes(1, 'big'))
+    ser.write(value.to_bytes(1, 'big'))
+    print(f"Enviado: ID={identifier}, Valor={value}")
 
-# Função para ler e atualizar os valores enviados pela ESP32
-def update_esp_values():    
-    data = bus.read_i2c_block_data(addr, 0x00, 2) #Lê valores recebidos
+# Função para atualizar os valores quando um slider é alterado
+def slider_alterado(cor):
+    if cor == "red":
+        valueR.set(sliderR.get())
+        enviar_dados(0, valueR.get())
+    elif cor == "green":
+        valueG.set(sliderG.get())
+        enviar_dados(1, valueG.get())
+    elif cor == "blue":
+        valueB.set(sliderB.get())
+        enviar_dados(2, valueB.get())
 
-    match data[0]:
-        case 0:
-            toggleS()
+    update_color()
 
-        case 1:
-            toggle_red()
-
-        case 2:
-            toggle_green()
-
-        case 3:
-            toggle_blue()
-
-        case 4:
-            potR = data[1]
-
-        case 5:
-            potG = data[1]
-
-        case 6:
-            potB = data[1]
-
-# Função para atualizar a cor do fundo
+# Função para atualizar a cor do fundo do canvas
 def update_color():
     r = valueR.get()
     g = valueG.get()
     b = valueB.get()
-    color = f"#{r:02x}{g:02x}{b:02x}"  # Converter RGB para o formato Hex
-    canvas.config(bg=color)  # Atualizar o fundo do canvas com a cor selecionada
-    # Atualizar os rótulos para mostrar os valores atuais de RGB
+    color = f"#{r:02x}{g:02x}{b:02x}"
+    canvas.config(bg=color)
     red_label.config(text=f"Red: {r}")
     green_label.config(text=f"Green: {g}")
     blue_label.config(text=f"Blue: {b}")
 
-# Função para alternar o valor do toggle e atualizar os valores de value (RGB)
-def toggleS():
-    toggleSvar.set(1 - toggleSvar.get())  # Inverter o valor binário de toggleB
-    value = toggleSvar.get()
-    bus.write_i2c_block_data(addr, 0x00, [0,value])
+# Função para receber dados do microcontrolador
+def receber_dados():
+    data = [0, 0]
+    index = 0
+    receiving = False
 
-def toggle_red():
-    toggleR.set(1 - toggleR.get())  # Inverter o valor binário de toggleR
-    update_value()
-    value = toggleR.get()
-    bus.write_i2c_block_data(addr, 0x00, [1,value])
+    while ser.in_waiting > 0:
+        received_byte = ser.read()
 
-def toggle_green():
-    toggleG.set(1 - toggleG.get())  # Inverter o valor binário de toggleG
-    update_value()
-    value = toggleG.get()
-    bus.write_i2c_block_data(addr, 0x00, [2,value])
+        if received_byte == b'i':  # Início do pacote
+            receiving = True
+            index = 0
+        elif receiving:
+            data[index] = ord(received_byte)
+            index += 1
 
-def toggle_blue():
-    toggleB.set(1 - toggleB.get())  # Inverter o valor binário de toggleB
-    update_value()
-    value = toggleB.get()
-    bus.write_i2c_block_data(addr, 0x00, [3,value])
+            if index == 2:  # Pacote completo
+                receiving = False
+                processar_dados_recebidos(data)
 
-# Função para atualizar os valores das cores (Red, Green, Blue)
-def update_value():
-    # Se toggleR for 1, usa sliderR; caso contrário, usa potR
-    if toggleR.get() == 1:
-        valueR.set(sliderR.get())
-        value = sliderR.get()
-        bus.write_i2c_block_data(addr, 0x00, [4, value])
-    else:
-        valueR.set(potR)
+# Função para processar os dados recebidos
+def processar_dados_recebidos(data):
+    identifier, value = data[0], data[1]
 
-    # Se toggleG for 1, usa sliderG; caso contrário, usa potG
-    if toggleG.get() == 1:
-        valueG.set(sliderG.get())
-        value = sliderG.get()
-        bus.write_i2c_block_data(addr, 0x00, [5,value])
-    else:
-        valueG.set(potG)
-
-    # Se toggleB for 1, usa sliderB; caso contrário, usa potB
-    if toggleB.get() == 1:
-        valueB.set(sliderB.get())
-        value = sliderB.get()
-        bus.write_i2c_block_data(addr, 0x00, [6,value])
-    else:
-        valueB.set(potB)
+    if identifier == 0:  # Potenciômetro Red
+        valueR.set(value)
+        sliderR.set(value)  # Atualiza o valor do slider Red diretamente
+    elif identifier == 1:  # Potenciômetro Green
+        valueG.set(value)
+        sliderG.set(value)  # Atualiza o valor do slider Green diretamente
+    elif identifier == 2:  # Potenciômetro Blue
+        valueB.set(value)
+        sliderB.set(value)  # Atualiza o valor do slider Blue diretamente
 
     update_color()
 
-# Criar a janela principal
+# Função para verificar dados serial periodicamente
+def verificar_serial():
+    receber_dados()
+    root.after(100, verificar_serial)
+
+# Configuração da interface gráfica
 root = tk.Tk()
 root.title("RGB Controller")
 
@@ -106,51 +86,33 @@ valueR = tk.IntVar(value=0)
 valueG = tk.IntVar(value=0)
 valueB = tk.IntVar(value=0)
 
-# Variáveis de toggle (0 ou 1)
-toggleSvar = tk.IntVar(value=0)
-toggleR = tk.IntVar(value=0)
-toggleG = tk.IntVar(value=0)
-toggleB = tk.IntVar(value=0)
+# Sliders para Red, Green e Blue
+sliderR = tk.Scale(root, from_=0, to=255, orient="horizontal",
+                   command=lambda _: slider_alterado("red"))
+sliderR.pack()
 
-# Variáveis de slider para as cores Red, Green e Blue
-sliderR = tk.Scale(root, from_=0, to=255, orient="horizontal", command=lambda _: update_value())
-sliderG = tk.Scale(root, from_=0, to=255, orient="horizontal", command=lambda _: update_value())
-sliderB = tk.Scale(root, from_=0, to=255, orient="horizontal", command=lambda _: update_value())
+sliderG = tk.Scale(root, from_=0, to=255, orient="horizontal",
+                   command=lambda _: slider_alterado("green"))
+sliderG.pack()
 
-# Variáveis de potenciômetro (valores fixos para simulação)
-potR = 0  # Valor fixo do potenciômetro para Red
-potG = 0  # Valor fixo do potenciômetro para Green
-potB = 0  # Valor fixo do potenciômetro para Blue
+sliderB = tk.Scale(root, from_=0, to=255, orient="horizontal",
+                   command=lambda _: slider_alterado("blue"))
+sliderB.pack()
 
-# Criar os rótulos e sliders para as cores Red, Green e Blue
+# Rótulos para mostrar os valores atuais
 red_label = tk.Label(root, text="Red: 0")
 red_label.pack()
-sliderR.pack()
 
 green_label = tk.Label(root, text="Green: 0")
 green_label.pack()
-sliderG.pack()
 
 blue_label = tk.Label(root, text="Blue: 0")
 blue_label.pack()
-sliderB.pack()
 
-# Criar os botões para alternar entre o slider e o potenciômetro para cada cor e o botão send
-send_button = tk.Button(root, text="Send to Sheets", command=toggleS)
-send_button.pack()
-
-red_button = tk.Button(root, text="Toggle Red", command=toggle_red)
-red_button.pack()
-
-green_button = tk.Button(root, text="Toggle Green", command=toggle_green)
-green_button.pack()
-
-blue_button = tk.Button(root, text="Toggle Blue", command=toggle_blue)
-blue_button.pack()
-
-# Criar o canvas para mostrar a cor resultante
+# Canvas para mostrar a cor resultante
 canvas = tk.Canvas(root, width=200, height=200, bg="#000000")
 canvas.pack()
 
-# Iniciar o loop principal do Tkinter
+# Iniciar verificação de dados serial e loop principal do Tkinter
+root.after(100, verificar_serial)
 root.mainloop()
